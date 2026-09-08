@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Momentum Daily",
+    "slug": "momentum-daily",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-notifications"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mariak.momentumdaily"
+    },
+    "android": {
+      "package": "com.mariak.momentumdaily",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "aef1c16d-a2b5-4dbb-99a5-3ed83c666d2d"
+      }
+    }
+  }
+}
