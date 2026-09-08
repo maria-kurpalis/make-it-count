@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -15,39 +16,57 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { completionLines, pickLine, screenLines } from './src/motivation';
-import { addDays, AppData, dateKey, DayRecord, emptyRecord, Goal, GoalKind, initialData } from './src/model';
+import { completionLines, reflectionLines, pickLine, screenLines } from './src/motivation';
+import { addDays, AppData, dateKey, DayRecord, diaryEntries, emptyRecord, Goal, GoalKind, initialData } from './src/model';
 import { rescheduleNotifications } from './src/notifications';
 import { loadData, saveData } from './src/storage';
 
 type Tab = 'today' | 'progress' | 'diary' | 'settings';
 
 const COLORS = {
-  ink: '#18231D', muted: '#66716A', canvas: '#F5F7F2', card: '#FFFFFF',
-  green: '#256B4A', greenSoft: '#DDEEE4', coral: '#C65742',
-  coralSoft: '#F8E2DD', gold: '#E4A83B', line: '#DDE3DC',
+  ink: '#25213D', muted: '#69647D', canvas: '#F7F3FF', card: '#FFFFFF',
+  green: '#6543BB', greenSoft: '#EDE3FF', coral: '#BA493D',
+  coralSoft: '#FFE5DE', gold: '#E4A83B', line: '#DED6EC',
 };
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function Button({ label, onPress, secondary = false }: { label: string; onPress: () => void; secondary?: boolean }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.button, secondary && styles.buttonSecondary, pressed && { opacity: 0.8 }]}>
+    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.button, secondary && styles.buttonSecondary, pressed && { opacity: 0.8, transform: [{ scale: 0.98 }] }]}>
       <Text style={[styles.buttonText, secondary && styles.buttonTextSecondary]}>{label}</Text>
     </Pressable>
   );
 }
 
 function TimeField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [hour, minute] = value.split(':');
   return (
     <View style={styles.fieldBlock}>
       <Text style={styles.label}>{label}</Text>
-      <TextInput value={value} onChangeText={onChange} placeholder="08:00" keyboardType="numbers-and-punctuation" maxLength={5} style={styles.input} />
-      <Text style={styles.hint}>24-hour format (HH:MM)</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel={`${label}, ${value}. Change time`} onPress={() => setOpen(true)} style={[styles.input, styles.summaryRow]}>
+        <Text style={styles.label}>{value}</Text><Ionicons name="time-outline" size={22} color={COLORS.green} />
+      </Pressable>
+      <Text style={styles.hint}>Keep this time or tap to choose. No typing needed.</Text>
+      <Modal transparent visible={open} animationType="fade" onRequestClose={() => setOpen(false)}>
+        <View style={styles.modalBackdrop}><View style={styles.card} accessibilityViewIsModal>
+          <Text style={styles.cardTitle}>{label}</Text><Text style={styles.pageTitle}>{value}</Text>
+          <Text style={styles.label}>Hour · 24-hour clock</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator>
+            {Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')).map(h => <Pressable key={h} accessibilityRole="button" accessibilityState={{ selected: hour === h }} onPress={() => onChange(`${h}:${minute}`)} style={[styles.timeOption, hour === h && styles.segmentActive]}><Text style={styles.label}>{h}</Text></Pressable>)}
+          </ScrollView>
+          <Text style={styles.label}>Minute · swipe for more</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator>
+            {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0')).map(m => <Pressable key={m} accessibilityRole="button" accessibilityState={{ selected: minute === m }} onPress={() => onChange(`${hour}:${m}`)} style={[styles.timeOption, minute === m && styles.segmentActive]}><Text style={styles.label}>{m}</Text></Pressable>)}
+          </ScrollView>
+          <Button label="Done" onPress={() => setOpen(false)} />
+        </View></View>
+      </Modal>
     </View>
   );
 }
 
-function Onboarding({ data, onFinish }: { data: AppData; onFinish: (data: AppData) => void }) {
+function Onboarding({ data, onFinish }: { data: AppData; onFinish: (data: AppData, startDay: 'today' | 'tomorrow') => void }) {
   const [settings, setSettings] = useState(data.settings);
   const [startDay, setStartDay] = useState<'today' | 'tomorrow'>('tomorrow');
 
@@ -56,7 +75,7 @@ function Onboarding({ data, onFinish }: { data: AppData; onFinish: (data: AppDat
       const next = { ...data, settings: { ...settings, onboarded: true } };
       const granted = await rescheduleNotifications(settings.planningTime, settings.reviewTime, settings.diaryEnabled, settings.diaryTime);
       if (!granted) Alert.alert('Notifications are off', 'You can enable them later in your phone settings.');
-      onFinish(next);
+      onFinish(next, startDay);
     } catch (error) {
       Alert.alert('Check the reminder times', error instanceof Error ? error.message : 'Please try again.');
     }
@@ -67,7 +86,7 @@ function Onboarding({ data, onFinish }: { data: AppData; onFinish: (data: AppDat
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.onboarding} keyboardShouldPersistTaps="handled">
           <View style={styles.brandMark}><Ionicons name="sparkles" size={26} color={COLORS.green} /></View>
-          <Text style={styles.eyebrow}>MOMENTUM</Text>
+          <Text style={styles.eyebrow}>MAKE IT COUNT</Text>
           <Text style={styles.heroTitle}>Make a promise to your day.</Text>
           <Text style={styles.heroCopy}>Choose when you want a gentle nudge to plan, reflect, and write a few honest lines.</Text>
 
@@ -103,7 +122,9 @@ function Onboarding({ data, onFinish }: { data: AppData; onFinish: (data: AppDat
   );
 }
 
-function GoalRow({ goal, onStatus, onReason }: { goal: Goal; onStatus: (status: Goal['status']) => void; onReason: (reason: string) => void }) {
+function GoalRow({ goal, onStatus, onReason, onReflect }: { goal: Goal; onStatus: (status: Goal['status']) => void; onReason: (reason: string) => void; onReflect: () => void }) {
+  const [reflecting, setReflecting] = useState(false);
+  function finishReflection() { setReflecting(false); Keyboard.dismiss(); onReflect(); }
   return (
     <View style={styles.goalRow}>
       <View style={[styles.kindIcon, goal.kind === 'do' ? styles.doIcon : styles.dontIcon]}>
@@ -112,18 +133,19 @@ function GoalRow({ goal, onStatus, onReason }: { goal: Goal; onStatus: (status: 
       <View style={styles.goalMain}>
         <Text style={[styles.goalTitle, goal.status === 'achieved' && styles.goalDone]}>{goal.title}</Text>
         <View style={styles.statusActions}>
-          <Pressable onPress={() => onStatus('achieved')} style={[styles.statusButton, goal.status === 'achieved' && styles.statusAchieved]}>
+          <Pressable onPress={() => { setReflecting(false); Keyboard.dismiss(); onStatus('achieved'); }} style={[styles.statusButton, goal.status === 'achieved' && styles.statusAchieved]}>
             <Ionicons name="checkmark" size={16} color={goal.status === 'achieved' ? '#FFF' : COLORS.green} />
             <Text style={[styles.statusText, goal.status === 'achieved' && styles.statusTextActive]}>Achieved</Text>
           </Pressable>
-          <Pressable onPress={() => onStatus('failed')} style={[styles.statusButton, goal.status === 'failed' && styles.statusFailed]}>
+          <Pressable onPress={() => { onStatus('failed'); setReflecting(true); }} style={[styles.statusButton, goal.status === 'failed' && styles.statusFailed]}>
             <Ionicons name="close" size={16} color={goal.status === 'failed' ? '#FFF' : COLORS.coral} />
             <Text style={[styles.statusText, goal.status === 'failed' && styles.statusTextActive]}>Not today</Text>
           </Pressable>
         </View>
-        {goal.status === 'failed' && (
-          <TextInput value={goal.failureReason ?? ''} onChangeText={onReason} placeholder="What got in the way? (optional)" placeholderTextColor="#8B948E" style={styles.reasonInput} />
+        {goal.status === 'failed' && reflecting && (
+          <View style={styles.fieldBlock}><TextInput autoFocus value={goal.failureReason ?? ''} onChangeText={onReason} onSubmitEditing={finishReflection} returnKeyType="done" placeholder="What got in the way? (optional)" placeholderTextColor="#8B948E" style={styles.reasonInput} /><Button label="Done" onPress={finishReflection} secondary /></View>
         )}
+        {goal.status === 'failed' && !reflecting && <Pressable accessibilityRole="button" onPress={() => setReflecting(true)}><Text style={styles.muted}>{goal.failureReason || 'Add a reflection (optional)'} ✎</Text></Pressable>}
       </View>
     </View>
   );
@@ -133,6 +155,7 @@ function TodayScreen({ record, selectedDate, onDateChange, onChange }: { record:
   const [draft, setDraft] = useState('');
   const [kind, setKind] = useState<GoalKind>('do');
   const [encouragement, setEncouragement] = useState('');
+  const [reflecting, setReflecting] = useState(false);
   const achieved = record.goals.filter((goal) => goal.status === 'achieved').length;
   const failed = record.goals.filter((goal) => goal.status === 'failed').length;
 
@@ -146,7 +169,7 @@ function TodayScreen({ record, selectedDate, onDateChange, onChange }: { record:
   function updateGoal(id: string, patch: Partial<Goal>) {
     const previous = record.goals.find((goal) => goal.id === id);
     onChange({ ...record, goals: record.goals.map((goal) => goal.id === id ? { ...goal, ...patch } : goal) });
-    if (patch.status === 'achieved' && previous?.status !== 'achieved') setEncouragement(pickLine(completionLines));
+    if (patch.status === 'achieved' && previous?.status !== 'achieved') { setReflecting(false); setEncouragement(pickLine(completionLines)); }
   }
 
   return (
@@ -178,14 +201,15 @@ function TodayScreen({ record, selectedDate, onDateChange, onChange }: { record:
       {record.goals.length > 0 ? (
         <View style={styles.card}>
           <View style={styles.summaryRow}><Text style={styles.cardTitle}>Today’s promises</Text><Text style={styles.summaryText}>{achieved} achieved · {failed} missed</Text></View>
-          {record.goals.map((goal) => <GoalRow key={goal.id} goal={goal} onStatus={(status) => updateGoal(goal.id, { status })} onReason={(failureReason) => updateGoal(goal.id, { failureReason })} />)}
+          <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${achieved / record.goals.length * 100}%` }]} /></View>
+          {record.goals.map((goal) => <GoalRow key={goal.id} goal={goal} onStatus={(status) => updateGoal(goal.id, { status })} onReason={(failureReason) => updateGoal(goal.id, { failureReason })} onReflect={() => { setReflecting(true); setEncouragement(pickLine(reflectionLines)); }} />)}
         </View>
       ) : (
         <View style={styles.emptyCard}><Ionicons name="leaf-outline" size={30} color={COLORS.green} /><Text style={styles.emptyTitle}>A clear day starts small.</Text><Text style={styles.muted}>Add one Do and one Don’t to begin.</Text></View>
       )}
       <Modal transparent visible={!!encouragement} animationType="fade" onRequestClose={() => setEncouragement('')}>
         <Pressable style={styles.modalBackdrop} onPress={() => setEncouragement('')}>
-          <View style={styles.celebrationCard}><View style={styles.celebrationIcon}><Ionicons name="checkmark" size={32} color="#FFF" /></View><Text style={styles.celebrationTitle}>Beautiful work.</Text><Text style={styles.celebrationCopy}>{encouragement}</Text><Button label="Keep going" onPress={() => setEncouragement('')} /></View>
+          <View style={styles.celebrationCard}><View style={styles.celebrationIcon}><Ionicons name={reflecting ? 'heart' : 'checkmark'} size={32} color="#FFF" /></View><Text style={styles.celebrationTitle}>{reflecting ? 'A fresh step awaits.' : 'Beautiful work.'}</Text><Text style={styles.celebrationCopy}>{encouragement}</Text><Button label="Keep going" onPress={() => setEncouragement('')} /></View>
         </Pressable>
       </Modal>
     </ScrollView>
@@ -226,12 +250,30 @@ function ProgressScreen({ records }: { records: Record<string, DayRecord> }) {
   );
 }
 
-function DiaryScreen({ record, onChange }: { record: DayRecord; onChange: (record: DayRecord) => void }) {
+function DiaryScreen({ record, records, onChange }: { record: DayRecord; records: Record<string, DayRecord>; onChange: (record: DayRecord) => void }) {
+  const [editing, setEditing] = useState(!!record.diaryDraft);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const entries = Object.values(records).sort((a, b) => b.date.localeCompare(a.date)).flatMap(day => diaryEntries(day).slice().reverse().map(entry => ({ ...entry, date: day.date })));
+  function done() {
+    const text = record.diaryDraft?.trim();
+    if (text) onChange({ ...record, diaryDraft: '', diaryEntries: [...diaryEntries(record), { id: `${Date.now()}-${Math.random()}`, text, savedAt: new Date().toISOString() }] });
+    else if (record.diaryDraft) onChange({ ...record, diaryDraft: '' });
+    setEditing(false); setExpanded(null); Keyboard.dismiss();
+  }
   return (
     <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
       <Text style={styles.eyebrow}>PRIVATE DIARY</Text><Text style={styles.pageTitle}>A few honest lines.</Text>
       <View style={styles.quoteCard}><Ionicons name="sparkles" size={18} color={COLORS.gold} /><Text style={styles.quote}>Two lines are enough. Your day is worth remembering.</Text></View>
-      <View style={styles.card}><Text style={styles.cardTitle}>How did today feel?</Text><Text style={styles.muted}>There is no right way to write this.</Text><TextInput value={record.diary ?? ''} onChangeText={(diary) => onChange({ ...record, diary })} placeholder="Today I noticed…" placeholderTextColor="#8B948E" multiline textAlignVertical="top" style={[styles.input, styles.diaryInput]} /><Text style={styles.savedNote}>{record.diary?.trim() ? 'Saved automatically on this device' : 'Start with one sentence'}</Text></View>
+      {editing ? <View style={styles.card}><Text style={styles.cardTitle}>How did today feel?</Text><Text style={styles.muted}>There is no right way to write this.</Text><TextInput autoFocus value={record.diaryDraft ?? ''} onChangeText={(diaryDraft) => onChange({ ...record, diaryDraft })} placeholder="Today I noticed…" placeholderTextColor="#8B948E" multiline textAlignVertical="top" style={[styles.input, styles.diaryInput]} /><Text style={styles.savedNote}>Your draft is saved automatically</Text><Button label="Done" onPress={done} /></View> : <Button label="Write a new entry" onPress={() => setEditing(true)} />}
+      <Text style={styles.cardTitle}>Your memories · {entries.length}</Text>
+      {entries.length === 0 && <View style={styles.emptyCard}><Ionicons name="book-outline" size={30} color={COLORS.green} /><Text style={styles.emptyTitle}>A little space for your day.</Text><Text style={styles.muted}>Saved entries will appear here.</Text></View>}
+      {entries.map(entry => <View key={entry.id} style={styles.card}>
+        <Pressable accessibilityRole="button" accessibilityState={{ expanded: expanded === entry.id }} onPress={() => setExpanded(expanded === entry.id ? null : entry.id)} style={styles.summaryRow}>
+          <View style={styles.flex}><Text style={styles.label}>{entry.savedAt ? new Date(entry.savedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : `${entry.date} · Earlier entry`}</Text>{expanded !== entry.id && <Text numberOfLines={1} style={styles.muted}>{entry.text}</Text>}</View>
+          <Ionicons name={expanded === entry.id ? 'chevron-up' : 'chevron-down'} size={20} color={COLORS.green} />
+        </Pressable>
+        {expanded === entry.id && <><TextInput accessibilityLabel="Edit diary entry" multiline textAlignVertical="top" style={[styles.input, styles.multiline]} value={entry.text} onChangeText={text => { const day = records[entry.date]; onChange({ ...day, diaryEntries: diaryEntries(day).map(item => item.id === entry.id ? { ...item, text } : item) }); }} /><Text style={styles.savedNote}>Changes save automatically</Text><Button label="Done" secondary onPress={() => { setExpanded(null); Keyboard.dismiss(); }} /></>}
+      </View>)}
     </ScrollView>
   );
 }
@@ -240,9 +282,9 @@ function SettingsScreen({ data, onChange }: { data: AppData; onChange: (data: Ap
   const [settings, setSettings] = useState(data.settings);
   async function apply() {
     try {
-      await rescheduleNotifications(settings.planningTime, settings.reviewTime, settings.diaryEnabled, settings.diaryTime);
+      const granted = await rescheduleNotifications(settings.planningTime, settings.reviewTime, settings.diaryEnabled, settings.diaryTime);
       onChange({ ...data, settings });
-      Alert.alert('Reminders updated', 'Your new routine is ready.');
+      Alert.alert(granted ? 'Reminders updated' : 'Settings saved', granted ? 'Your new routine is ready.' : 'Notifications are off. Enable them in your phone settings to receive reminders.');
     } catch (error) {
       Alert.alert('Check the reminder times', error instanceof Error ? error.message : 'Please try again.');
     }
@@ -273,7 +315,7 @@ export default function App() {
   function updateRecord(record: DayRecord) { commit({ ...data, records: { ...data.records, [record.date]: record } }); }
 
   if (!loaded) return <SafeAreaView style={[styles.safe, styles.center]}><Text style={styles.muted}>Preparing your day…</Text></SafeAreaView>;
-  if (!data.settings.onboarded) return <Onboarding data={data} onFinish={commit} />;
+  if (!data.settings.onboarded) return <Onboarding data={data} onFinish={(next, startDay) => { setSelectedDate(startDay === 'today' ? dateKey() : addDays(dateKey(), 1)); commit(next); }} />;
 
   const record = data.records[selectedDate] ?? emptyRecord(selectedDate);
   const todayRecord = data.records[dateKey()] ?? emptyRecord(dateKey());
@@ -285,12 +327,12 @@ export default function App() {
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar style="dark" />
-      <View style={styles.flex}>
-        {tab === 'today' && <TodayScreen record={record} selectedDate={selectedDate} onDateChange={setSelectedDate} onChange={updateRecord} />}
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        {tab === 'today' && <TodayScreen key={selectedDate} record={record} selectedDate={selectedDate} onDateChange={setSelectedDate} onChange={updateRecord} />}
         {tab === 'progress' && <ProgressScreen records={data.records} />}
-        {tab === 'diary' && <DiaryScreen record={todayRecord} onChange={updateRecord} />}
+        {tab === 'diary' && <DiaryScreen key={todayRecord.date} record={todayRecord} records={data.records} onChange={updateRecord} />}
         {tab === 'settings' && <SettingsScreen data={data} onChange={commit} />}
-      </View>
+      </KeyboardAvoidingView>
       <View style={styles.tabBar}>
         {tabs.map(([value, icon, label]) => <Pressable key={value} onPress={() => setTab(value)} style={styles.tabButton}><Ionicons name={icon} size={22} color={tab === value ? COLORS.green : '#8B948E'} /><Text style={[styles.tabLabel, tab === value && styles.tabLabelActive]}>{label}</Text></Pressable>)}
       </View>
@@ -299,6 +341,9 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  timeOption: { padding: 14, marginRight: 6, borderRadius: 12, backgroundColor: COLORS.greenSoft, borderWidth: 1, borderColor: COLORS.green },
+  progressTrack: { height: 8, backgroundColor: COLORS.greenSoft, borderRadius: 8, overflow: 'hidden' },
+  progressFill: { height: '100%', backgroundColor: COLORS.green, borderRadius: 8 },
   flex: { flex: 1 }, safe: { flex: 1, backgroundColor: COLORS.canvas }, center: { alignItems: 'center', justifyContent: 'center' },
   onboarding: { padding: 24, paddingTop: 50, paddingBottom: 52, gap: 18 }, page: { padding: 20, paddingTop: 26, paddingBottom: 36, gap: 16 },
   brandMark: { width: 52, height: 52, borderRadius: 18, backgroundColor: COLORS.greenSoft, alignItems: 'center', justifyContent: 'center' },

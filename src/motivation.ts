@@ -17,3 +17,10 @@ export const completionLines = [
 export function pickLine(lines: string[], seed = Date.now()) {
   return lines[Math.abs(seed) % lines.length];
 }
+
+export const reflectionLines = [
+  'One difficult day does not erase your progress. Your next step still counts.',
+  'Being honest with yourself is progress too. Tomorrow is another chance.',
+  'You paused to reflect. Take what you learned into your next small step.',
+  'Be kind to yourself. You can begin again, one promise at a time.',
+];

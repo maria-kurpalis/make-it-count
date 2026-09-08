@@ -14,7 +14,16 @@ export type DayRecord = {
   motivation: string;
   goals: Goal[];
   diary?: string;
+  diaryEntries?: DiaryEntry[];
+  diaryDraft?: string;
 };
+
+export type DiaryEntry = { id: string; text: string; savedAt?: string };
+
+// Older diary text has a known day, but no reliable time. Preserve it honestly.
+export function diaryEntries(record: DayRecord): DiaryEntry[] {
+  return record.diaryEntries ?? (record.diary?.trim() ? [{ id: `legacy-${record.date}`, text: record.diary }] : []);
+}
 
 export type AppSettings = {
   onboarded: boolean;
