@@ -57,14 +57,41 @@ export async function snoozeForFifteenMinutes() {
   });
 }
 
+export async function scheduleGoalReminder(goalId: string, goalTitle: string, kind: 'do' | 'dont', intervalMinutes: number) {
+  const granted = await configureNotifications();
+  if (!granted) return null;
+  return Notifications.scheduleNotificationAsync({
+    content: {
+      title: kind === 'do' ? 'A promise is waiting' : 'Stay true to your intention',
+      body: goalTitle,
+      data: { screen: 'today', reminderType: 'goal', goalId },
+      sound: true,
+      categoryIdentifier: 'DAILY_REMINDER',
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds: intervalMinutes * 60,
+      repeats: true,
+      channelId: 'daily',
+    },
+  });
+}
+
+export async function cancelGoalReminder(notificationId?: string) {
+  if (notificationId) await Notifications.cancelScheduledNotificationAsync(notificationId);
+}
+
 export async function rescheduleNotifications(planningTime: string, reviewTime: string, diaryEnabled: boolean, diaryTime: string) {
   const granted = await configureNotifications();
   if (!granted) return false;
-  await Notifications.cancelAllScheduledNotificationsAsync();
-  await scheduleDaily('Plan your day', 'What promises do you want to keep today?', planningTime, { screen: 'today' });
-  await scheduleDaily('Check in with yourself', 'Celebrate what worked and reflect on what got in the way.', reviewTime, { screen: 'today' });
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  await Promise.all(scheduled
+    .filter((notification) => notification.content.data?.reminderType !== 'goal')
+    .map((notification) => Notifications.cancelScheduledNotificationAsync(notification.identifier)));
+  await scheduleDaily('Plan your day', 'What promises do you want to keep today?', planningTime, { screen: 'today', reminderType: 'routine' });
+  await scheduleDaily('Check in with yourself', 'Celebrate what worked and reflect on what got in the way.', reviewTime, { screen: 'today', reminderType: 'routine' });
   if (diaryEnabled) {
-    await scheduleDaily('A few words for today', 'Even two lines are enough. This space is yours.', diaryTime, { screen: 'diary' });
+    await scheduleDaily('A few words for today', 'Even two lines are enough. This space is yours.', diaryTime, { screen: 'diary', reminderType: 'routine' });
   }
   return true;
 }
