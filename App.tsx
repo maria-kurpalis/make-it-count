@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as Notifications from 'expo-notifications';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -18,7 +19,7 @@ import {
 } from 'react-native';
 import { completionLines, reflectionLines, pickLine, screenLines } from './src/motivation';
 import { addDays, AppData, dateKey, DayRecord, diaryEntries, emptyRecord, Goal, GoalKind, initialData } from './src/model';
-import { rescheduleNotifications } from './src/notifications';
+import { rescheduleNotifications, snoozeForFifteenMinutes } from './src/notifications';
 import { loadData, saveData } from './src/storage';
 
 type Tab = 'today' | 'progress' | 'diary' | 'settings';
@@ -124,6 +125,8 @@ function Onboarding({ data, onFinish }: { data: AppData; onFinish: (data: AppDat
 
 function GoalRow({ goal, onStatus, onReason, onReflect }: { goal: Goal; onStatus: (status: Goal['status']) => void; onReason: (reason: string) => void; onReflect: () => void }) {
   const [reflecting, setReflecting] = useState(false);
+  const successLabel = goal.kind === 'do' ? 'Completed' : 'Resisted';
+  const failureLabel = goal.kind === 'do' ? 'Not completed' : 'Slipped';
   function finishReflection() { setReflecting(false); Keyboard.dismiss(); onReflect(); }
   return (
     <View style={styles.goalRow}>
@@ -135,11 +138,11 @@ function GoalRow({ goal, onStatus, onReason, onReflect }: { goal: Goal; onStatus
         <View style={styles.statusActions}>
           <Pressable onPress={() => { setReflecting(false); Keyboard.dismiss(); onStatus('achieved'); }} style={[styles.statusButton, goal.status === 'achieved' && styles.statusAchieved]}>
             <Ionicons name="checkmark" size={16} color={goal.status === 'achieved' ? '#FFF' : COLORS.green} />
-            <Text style={[styles.statusText, goal.status === 'achieved' && styles.statusTextActive]}>Achieved</Text>
+            <Text style={[styles.statusText, goal.status === 'achieved' && styles.statusTextActive]}>{successLabel}</Text>
           </Pressable>
           <Pressable onPress={() => { onStatus('failed'); setReflecting(true); }} style={[styles.statusButton, goal.status === 'failed' && styles.statusFailed]}>
             <Ionicons name="close" size={16} color={goal.status === 'failed' ? '#FFF' : COLORS.coral} />
-            <Text style={[styles.statusText, goal.status === 'failed' && styles.statusTextActive]}>Not today</Text>
+            <Text style={[styles.statusText, goal.status === 'failed' && styles.statusTextActive]}>{failureLabel}</Text>
           </Pressable>
         </View>
         {goal.status === 'failed' && reflecting && (
@@ -158,12 +161,27 @@ function TodayScreen({ record, selectedDate, onDateChange, onChange }: { record:
   const [reflecting, setReflecting] = useState(false);
   const achieved = record.goals.filter((goal) => goal.status === 'achieved').length;
   const failed = record.goals.filter((goal) => goal.status === 'failed').length;
+  const reviewed = achieved + failed;
+  const doCount = record.goals.filter((goal) => goal.kind === 'do').length;
+  const dontCount = record.goals.filter((goal) => goal.kind === 'dont').length;
+  const templates: { title: string; kind: GoalKind }[] = [
+    { title: 'Move my body for 20 minutes', kind: 'do' },
+    { title: 'Read for 15 minutes', kind: 'do' },
+    { title: 'No late-night scrolling', kind: 'dont' },
+    { title: 'No junk food today', kind: 'dont' },
+  ];
 
   function addGoal() {
     if (!draft.trim()) return;
     const goal: Goal = { id: `${Date.now()}-${Math.random()}`, title: draft.trim(), kind, status: 'pending' };
     onChange({ ...record, goals: [...record.goals, goal] });
     setDraft('');
+    Keyboard.dismiss();
+  }
+
+  function addTemplate(template: { title: string; kind: GoalKind }) {
+    if (record.goals.some((goal) => goal.title === template.title)) return;
+    onChange({ ...record, goals: [...record.goals, { id: `${Date.now()}-${Math.random()}`, title: template.title, kind: template.kind, status: 'pending' }] });
   }
 
   function updateGoal(id: string, patch: Partial<Goal>) {
@@ -175,7 +193,7 @@ function TodayScreen({ record, selectedDate, onDateChange, onChange }: { record:
   return (
     <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled">
       <View style={styles.headerRow}>
-        <View><Text style={styles.eyebrow}>YOUR DAY</Text><Text style={styles.pageTitle}>Keep it honest.</Text></View>
+        <View><Text style={styles.eyebrow}>YOUR DAY</Text><Text style={styles.pageTitle}>Make it count.</Text></View>
         <View style={styles.datePill}><Ionicons name="calendar-outline" size={15} color={COLORS.green} /><Text style={styles.datePillText}>{selectedDate === dateKey() ? 'Today' : 'Tomorrow'}</Text></View>
       </View>
       <View style={styles.segmented}>
@@ -188,7 +206,8 @@ function TodayScreen({ record, selectedDate, onDateChange, onChange }: { record:
         <TextInput value={record.motivation} onChangeText={(motivation) => onChange({ ...record, motivation })} placeholder="My motivation for today is…" placeholderTextColor="#8B948E" multiline style={[styles.input, styles.multiline]} />
       </View>
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Add a promise</Text>
+        <Text style={styles.cardTitle}>Your Do’s and Don’ts</Text>
+        <Text style={styles.muted}>A focused day works best: aim for up to 3 Do’s and 2 Don’ts.</Text>
         <View style={styles.kindChooser}>
           <Pressable onPress={() => setKind('do')} style={[styles.kindChoice, kind === 'do' && styles.kindDoActive]}><Text style={[styles.kindChoiceText, kind === 'do' && { color: COLORS.green }]}>Do</Text></Pressable>
           <Pressable onPress={() => setKind('dont')} style={[styles.kindChoice, kind === 'dont' && styles.kindDontActive]}><Text style={[styles.kindChoiceText, kind === 'dont' && { color: COLORS.coral }]}>Don’t</Text></Pressable>
@@ -197,16 +216,21 @@ function TodayScreen({ record, selectedDate, onDateChange, onChange }: { record:
           <TextInput value={draft} onChangeText={setDraft} onSubmitEditing={addGoal} placeholder={kind === 'do' ? 'e.g. Walk for 20 minutes' : 'e.g. No scrolling after 10 PM'} placeholderTextColor="#8B948E" style={[styles.input, styles.addInput]} />
           <Pressable onPress={addGoal} style={styles.addButton} accessibilityLabel="Add goal"><Ionicons name="add" size={26} color="#FFF" /></Pressable>
         </View>
+        <Text style={styles.templateHeading}>Quick templates</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.templateRow}>
+          {templates.map((template) => <Pressable key={template.title} onPress={() => addTemplate(template)} style={[styles.templateChip, template.kind === 'do' ? styles.templateDo : styles.templateDont]}><Ionicons name="add" size={15} color={template.kind === 'do' ? COLORS.green : COLORS.coral} /><Text style={[styles.templateText, { color: template.kind === 'do' ? COLORS.green : COLORS.coral }]}>{template.title}</Text></Pressable>)}
+        </ScrollView>
       </View>
       {record.goals.length > 0 ? (
         <View style={styles.card}>
-          <View style={styles.summaryRow}><Text style={styles.cardTitle}>Today’s promises</Text><Text style={styles.summaryText}>{achieved} achieved · {failed} missed</Text></View>
+          <View style={styles.summaryRow}><Text style={styles.cardTitle}>Today’s promises</Text><Text style={styles.summaryText}>{doCount} Do’s · {dontCount} Don’ts</Text></View>
           <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${achieved / record.goals.length * 100}%` }]} /></View>
           {record.goals.map((goal) => <GoalRow key={goal.id} goal={goal} onStatus={(status) => updateGoal(goal.id, { status })} onReason={(failureReason) => updateGoal(goal.id, { failureReason })} onReflect={() => { setReflecting(true); setEncouragement(pickLine(reflectionLines)); }} />)}
         </View>
       ) : (
         <View style={styles.emptyCard}><Ionicons name="leaf-outline" size={30} color={COLORS.green} /><Text style={styles.emptyTitle}>A clear day starts small.</Text><Text style={styles.muted}>Add one Do and one Don’t to begin.</Text></View>
       )}
+      {record.goals.length > 0 && <View style={styles.dailySummaryCard}><View style={styles.summaryIcon}><Ionicons name={reviewed === record.goals.length ? 'sparkles' : 'moon-outline'} size={22} color="#FFF" /></View><View style={styles.flex}><Text style={styles.cardTitle}>{reviewed === record.goals.length ? 'Today is reviewed.' : 'End-of-day check-in'}</Text><Text style={styles.summaryDetail}>{reviewed === record.goals.length ? `You completed ${achieved} and marked ${failed} as not achieved.` : `${reviewed} of ${record.goals.length} goals reviewed. Finish whenever you are ready.`}</Text></View></View>}
       <Modal transparent visible={!!encouragement} animationType="fade" onRequestClose={() => setEncouragement('')}>
         <Pressable style={styles.modalBackdrop} onPress={() => setEncouragement('')}>
           <View style={styles.celebrationCard}><View style={styles.celebrationIcon}><Ionicons name={reflecting ? 'heart' : 'checkmark'} size={32} color="#FFF" /></View><Text style={styles.celebrationTitle}>{reflecting ? 'A fresh step awaits.' : 'Beautiful work.'}</Text><Text style={styles.celebrationCopy}>{encouragement}</Text><Button label="Keep going" onPress={() => setEncouragement('')} /></View>
@@ -226,6 +250,9 @@ function ProgressScreen({ records }: { records: Record<string, DayRecord> }) {
   const failed = days.reduce((sum, day) => sum + day.failed, 0);
   const successRate = achieved + failed ? Math.round((achieved / (achieved + failed)) * 100) : 0;
   const max = Math.max(1, ...days.map((day) => day.achieved + day.failed));
+  const bestDay = days.reduce((best, day) => day.achieved > best.achieved ? day : best, days[0]);
+  const bestDate = new Date(`${bestDay.key}T12:00:00`);
+  const weeklyInsight = bestDay.achieved > 0 ? `${WEEKDAYS[bestDate.getDay()]} was your strongest day with ${bestDay.achieved} ${bestDay.achieved === 1 ? 'win' : 'wins'}.` : 'Your week begins with one small promise.';
 
   return (
     <ScrollView contentContainerStyle={styles.page}>
@@ -246,6 +273,7 @@ function ProgressScreen({ records }: { records: Record<string, DayRecord> }) {
         </View>
         <View style={styles.legend}><View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: COLORS.green }]} /><Text style={styles.legendText}>Achieved</Text></View><View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: COLORS.coral }]} /><Text style={styles.legendText}>Not achieved</Text></View></View>
       </View>
+      <View style={styles.insightCard}><Ionicons name="heart" size={19} color="#FFF" /><Text style={styles.insightText}>{weeklyInsight}</Text></View>
     </ScrollView>
   );
 }
@@ -311,6 +339,12 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(dateKey());
 
   useEffect(() => { loadData().then((stored) => { setData(stored); setLoaded(true); }); }, []);
+  useEffect(() => {
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      if (response.actionIdentifier === 'SNOOZE_15') snoozeForFifteenMinutes();
+    });
+    return () => subscription.remove();
+  }, []);
   function commit(next: AppData) { setData(next); saveData(next).catch(() => Alert.alert('Could not save', 'Please try again.')); }
   function updateRecord(record: DayRecord) { commit({ ...data, records: { ...data.records, [record.date]: record } }); }
 
@@ -357,7 +391,7 @@ const styles = StyleSheet.create({
   button: { minHeight: 52, backgroundColor: COLORS.green, borderRadius: 15, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18 }, buttonSecondary: { backgroundColor: COLORS.greenSoft }, buttonText: { color: '#FFF', fontSize: 16, fontWeight: '800' }, buttonTextSecondary: { color: COLORS.green },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 }, switchCopy: { flex: 1, gap: 3 }, privacy: { textAlign: 'center', color: COLORS.muted, fontSize: 13 },
   quoteCard: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 15, backgroundColor: '#FFF8E9', borderRadius: 17 }, quote: { flex: 1, color: '#70541F', fontSize: 15, lineHeight: 21, fontWeight: '600' },
-  kindChooser: { flexDirection: 'row', gap: 9 }, kindChoice: { flex: 1, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: COLORS.line, borderRadius: 12 }, kindDoActive: { backgroundColor: COLORS.greenSoft, borderColor: '#B8D8C5' }, kindDontActive: { backgroundColor: COLORS.coralSoft, borderColor: '#EDC0B7' }, kindChoiceText: { fontWeight: '800', color: COLORS.muted },
+  kindChooser: { flexDirection: 'row', gap: 9 }, kindChoice: { flex: 1, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: COLORS.line, borderRadius: 12 }, kindDoActive: { backgroundColor: COLORS.greenSoft, borderColor: '#B8D8C5' }, kindDontActive: { backgroundColor: COLORS.coralSoft, borderColor: '#EDC0B7' }, kindChoiceText: { fontWeight: '800', color: COLORS.muted }, templateHeading: { color: COLORS.muted, fontSize: 13, fontWeight: '800', marginTop: 2 }, templateRow: { gap: 8, paddingVertical: 2 }, templateChip: { flexDirection: 'row', gap: 5, alignItems: 'center', paddingHorizontal: 11, paddingVertical: 9, borderRadius: 999 }, templateDo: { backgroundColor: COLORS.greenSoft }, templateDont: { backgroundColor: COLORS.coralSoft }, templateText: { fontSize: 12, fontWeight: '700' },
   addRow: { flexDirection: 'row', gap: 10 }, addInput: { flex: 1 }, addButton: { width: 50, height: 50, backgroundColor: COLORS.green, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 }, summaryText: { fontSize: 12, color: COLORS.muted }, goalRow: { flexDirection: 'row', gap: 11, paddingVertical: 13, borderTopWidth: 1, borderTopColor: '#EEF1ED' }, kindIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' }, doIcon: { backgroundColor: COLORS.greenSoft }, dontIcon: { backgroundColor: COLORS.coralSoft },
   goalMain: { flex: 1, gap: 10 }, goalTitle: { fontSize: 16, lineHeight: 22, color: COLORS.ink, fontWeight: '600' }, goalDone: { textDecorationLine: 'line-through', color: COLORS.muted }, statusActions: { flexDirection: 'row', gap: 8 }, statusButton: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: COLORS.line, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10 }, statusAchieved: { backgroundColor: COLORS.green, borderColor: COLORS.green }, statusFailed: { backgroundColor: COLORS.coral, borderColor: COLORS.coral }, statusText: { fontSize: 12, fontWeight: '700', color: COLORS.muted }, statusTextActive: { color: '#FFF' }, reasonInput: { borderBottomWidth: 1, borderBottomColor: '#E4C7C1', paddingVertical: 9, color: COLORS.ink, fontSize: 14 },
@@ -365,6 +399,6 @@ const styles = StyleSheet.create({
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(24,35,29,0.55)', justifyContent: 'center', padding: 28 }, celebrationCard: { backgroundColor: COLORS.card, borderRadius: 26, padding: 25, alignItems: 'center', gap: 13 }, celebrationIcon: { width: 64, height: 64, borderRadius: 32, backgroundColor: COLORS.green, alignItems: 'center', justifyContent: 'center' }, celebrationTitle: { fontSize: 25, fontWeight: '800', color: COLORS.ink }, celebrationCopy: { fontSize: 16, lineHeight: 23, color: COLORS.muted, textAlign: 'center', marginBottom: 4 },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 11 }, statCard: { flexGrow: 1, minWidth: '46%', backgroundColor: COLORS.card, padding: 17, borderRadius: 19, borderWidth: 1, borderColor: '#E9EDE8' }, statWide: { width: '100%' }, statValue: { fontSize: 31, fontWeight: '800', color: COLORS.ink }, statLabel: { marginTop: 4, color: COLORS.muted, fontSize: 13, fontWeight: '600' },
   chart: { flexDirection: 'row', height: 190, alignItems: 'flex-end', justifyContent: 'space-between', paddingTop: 20 }, barColumn: { flex: 1, alignItems: 'center', gap: 8 }, barArea: { height: 150, flexDirection: 'row', alignItems: 'flex-end', gap: 3 }, bar: { width: 8, minHeight: 3, borderRadius: 5 }, achievedBar: { backgroundColor: COLORS.green }, failedBar: { backgroundColor: COLORS.coral }, dayLabel: { fontSize: 11, color: COLORS.muted, fontWeight: '600' }, legend: { flexDirection: 'row', justifyContent: 'center', gap: 20 }, legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 }, legendDot: { width: 8, height: 8, borderRadius: 4 }, legendText: { fontSize: 12, color: COLORS.muted },
-  savedNote: { textAlign: 'right', color: COLORS.green, fontSize: 12, fontWeight: '600' }, privacyCard: { flexDirection: 'row', gap: 13, backgroundColor: COLORS.greenSoft, padding: 18, borderRadius: 20 },
+  savedNote: { textAlign: 'right', color: COLORS.green, fontSize: 12, fontWeight: '600' }, privacyCard: { flexDirection: 'row', gap: 13, backgroundColor: COLORS.greenSoft, padding: 18, borderRadius: 20 }, dailySummaryCard: { flexDirection: 'row', gap: 13, backgroundColor: '#FFF0C9', padding: 18, borderRadius: 22, borderWidth: 1, borderColor: '#FFE1A1' }, summaryIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: COLORS.gold, alignItems: 'center', justifyContent: 'center' }, summaryDetail: { color: '#70541F', fontSize: 14, lineHeight: 20, marginTop: 2 }, insightCard: { flexDirection: 'row', alignItems: 'center', gap: 11, padding: 17, borderRadius: 20, backgroundColor: COLORS.green }, insightText: { color: '#FFF', fontSize: 15, lineHeight: 21, fontWeight: '700', flex: 1 },
   tabBar: { flexDirection: 'row', backgroundColor: COLORS.card, borderTopWidth: 1, borderTopColor: COLORS.line, paddingTop: 9, paddingBottom: Platform.OS === 'ios' ? 7 : 10 }, tabButton: { flex: 1, alignItems: 'center', gap: 3, paddingVertical: 4 }, tabLabel: { fontSize: 11, fontWeight: '600', color: '#8B948E' }, tabLabelActive: { color: COLORS.green },
 });
