@@ -7,6 +7,8 @@ export type Goal = {
   kind: GoalKind;
   status: GoalStatus;
   failureReason?: string;
+  reminderIntervalMinutes?: number;
+  notificationId?: string;
 };
 
 export type DayRecord = {
