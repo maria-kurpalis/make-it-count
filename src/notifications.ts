@@ -28,21 +28,32 @@ export async function configureNotifications() {
   const current = await Notifications.getPermissionsAsync();
   if (current.status !== 'granted') {
     const requested = await Notifications.requestPermissionsAsync();
-    return requested.status === 'granted';
+    if (requested.status !== 'granted') return false;
   }
+  await Notifications.setNotificationCategoryAsync('DAILY_REMINDER', [
+    { identifier: 'SNOOZE_15', buttonTitle: 'In 15 minutes', options: { opensAppToForeground: false } },
+    { identifier: 'SKIP_TODAY', buttonTitle: 'Skip today', options: { opensAppToForeground: false } },
+  ]);
   return true;
 }
 
 async function scheduleDaily(title: string, body: string, time: string, data: Record<string, unknown>) {
   const { hour, minute } = parseTime(time);
   await Notifications.scheduleNotificationAsync({
-    content: { title, body, data, sound: true },
+    content: { title, body, data, sound: true, categoryIdentifier: 'DAILY_REMINDER' },
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.DAILY,
       hour,
       minute,
       channelId: 'daily',
     },
+  });
+}
+
+export async function snoozeForFifteenMinutes() {
+  await Notifications.scheduleNotificationAsync({
+    content: { title: 'A gentle reminder', body: 'Your goals are waiting when you are ready.', sound: true, categoryIdentifier: 'DAILY_REMINDER' },
+    trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 15 * 60 },
   });
 }
 
