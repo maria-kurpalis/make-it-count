@@ -9,6 +9,7 @@ export type Goal = {
   failureReason?: string;
   reminderIntervalMinutes?: number;
   notificationId?: string;
+  reminderStartedAt?: string;
 };
 
 export type DayRecord = {
