@@ -19,7 +19,7 @@ import {
 } from 'react-native';
 import { completionLines, reflectionLines, pickLine, screenLines } from './src/motivation';
 import { addDays, AppData, dateKey, DayRecord, diaryEntries, emptyRecord, Goal, GoalKind, initialData } from './src/model';
-import { rescheduleNotifications, snoozeForFifteenMinutes } from './src/notifications';
+import { cancelGoalReminder, rescheduleNotifications, scheduleGoalReminder, snoozeForFifteenMinutes } from './src/notifications';
 import { loadData, saveData } from './src/storage';
 
 type Tab = 'today' | 'progress' | 'diary' | 'settings';
@@ -135,6 +135,12 @@ function GoalRow({ goal, onStatus, onReason, onReflect }: { goal: Goal; onStatus
       </View>
       <View style={styles.goalMain}>
         <Text style={[styles.goalTitle, goal.status === 'achieved' && styles.goalDone]}>{goal.title}</Text>
+        {!!goal.reminderIntervalMinutes && goal.status === 'pending' && (
+          <View style={styles.reminderBadge}>
+            <Ionicons name="notifications-outline" size={14} color={COLORS.green} />
+            <Text style={styles.reminderBadgeText}>Every {goal.reminderIntervalMinutes < 60 ? `${goal.reminderIntervalMinutes} min` : goal.reminderIntervalMinutes === 60 ? '1 hour' : `${goal.reminderIntervalMinutes / 60} hours`}</Text>
+          </View>
+        )}
         <View style={styles.statusActions}>
           <Pressable onPress={() => { setReflecting(false); Keyboard.dismiss(); onStatus('achieved'); }} style={[styles.statusButton, goal.status === 'achieved' && styles.statusAchieved]}>
             <Ionicons name="checkmark" size={16} color={goal.status === 'achieved' ? '#FFF' : COLORS.green} />
@@ -159,6 +165,9 @@ function TodayScreen({ record, selectedDate, onDateChange, onChange }: { record:
   const [kind, setKind] = useState<GoalKind>('do');
   const [encouragement, setEncouragement] = useState('');
   const [reflecting, setReflecting] = useState(false);
+  const [reminderEnabled, setReminderEnabled] = useState(false);
+  const [reminderChoice, setReminderChoice] = useState<'15' | '30' | '60' | 'custom'>('30');
+  const [customReminder, setCustomReminder] = useState('45');
   const achieved = record.goals.filter((goal) => goal.status === 'achieved').length;
   const failed = record.goals.filter((goal) => goal.status === 'failed').length;
   const reviewed = achieved + failed;
@@ -171,11 +180,30 @@ function TodayScreen({ record, selectedDate, onDateChange, onChange }: { record:
     { title: 'No junk food today', kind: 'dont' },
   ];
 
-  function addGoal() {
+  async function addGoal() {
     if (!draft.trim()) return;
-    const goal: Goal = { id: `${Date.now()}-${Math.random()}`, title: draft.trim(), kind, status: 'pending' };
+    const interval = reminderChoice === 'custom' ? Number(customReminder) : Number(reminderChoice);
+    if (reminderEnabled && (!Number.isInteger(interval) || interval < 1)) {
+      Alert.alert('Choose a valid interval', 'Enter the number of minutes between reminders.');
+      return;
+    }
+    const goal: Goal = { id: `${Date.now()}-${Math.random()}`, title: draft.trim(), kind, status: 'pending', reminderIntervalMinutes: reminderEnabled ? interval : undefined };
+    if (reminderEnabled) {
+      try {
+        const notificationId = await scheduleGoalReminder(goal.id, goal.title, goal.kind, interval);
+        if (notificationId) goal.notificationId = notificationId;
+        else {
+          goal.reminderIntervalMinutes = undefined;
+          Alert.alert('Goal saved without reminders', 'Enable notifications in your phone settings when you want reminders.');
+        }
+      } catch {
+        goal.reminderIntervalMinutes = undefined;
+        Alert.alert('Goal saved without reminders', 'The reminder could not be scheduled. Please try again from your phone.');
+      }
+    }
     onChange({ ...record, goals: [...record.goals, goal] });
     setDraft('');
+    setReminderEnabled(false);
     Keyboard.dismiss();
   }
 
@@ -186,7 +214,8 @@ function TodayScreen({ record, selectedDate, onDateChange, onChange }: { record:
 
   function updateGoal(id: string, patch: Partial<Goal>) {
     const previous = record.goals.find((goal) => goal.id === id);
-    onChange({ ...record, goals: record.goals.map((goal) => goal.id === id ? { ...goal, ...patch } : goal) });
+    if (patch.status && patch.status !== 'pending' && previous?.notificationId) cancelGoalReminder(previous.notificationId).catch(() => undefined);
+    onChange({ ...record, goals: record.goals.map((goal) => goal.id === id ? { ...goal, ...patch, notificationId: patch.status && patch.status !== 'pending' ? undefined : goal.notificationId } : goal) });
     if (patch.status === 'achieved' && previous?.status !== 'achieved') { setReflecting(false); setEncouragement(pickLine(completionLines)); }
   }
 
@@ -215,6 +244,18 @@ function TodayScreen({ record, selectedDate, onDateChange, onChange }: { record:
         <View style={styles.addRow}>
           <TextInput value={draft} onChangeText={setDraft} onSubmitEditing={addGoal} placeholder={kind === 'do' ? 'e.g. Walk for 20 minutes' : 'e.g. No scrolling after 10 PM'} placeholderTextColor="#8B948E" style={[styles.input, styles.addInput]} />
           <Pressable onPress={addGoal} style={styles.addButton} accessibilityLabel="Add goal"><Ionicons name="add" size={26} color="#FFF" /></Pressable>
+        </View>
+        <View style={styles.reminderPanel}>
+          <View style={styles.switchRow}>
+            <View style={styles.switchCopy}><Text style={styles.label}>Remind me about this</Text><Text style={styles.muted}>Optional · repeats until you review the item</Text></View>
+            <Switch value={reminderEnabled} onValueChange={setReminderEnabled} trackColor={{ true: COLORS.greenSoft }} thumbColor={reminderEnabled ? COLORS.green : '#AAA'} />
+          </View>
+          {reminderEnabled && <>
+            <View style={styles.reminderChoices}>
+              {(['15', '30', '60', 'custom'] as const).map(value => <Pressable key={value} onPress={() => setReminderChoice(value)} style={[styles.reminderChoice, reminderChoice === value && styles.reminderChoiceActive]}><Text style={[styles.reminderChoiceText, reminderChoice === value && styles.reminderChoiceTextActive]}>{value === '15' ? '15 min' : value === '30' ? '30 min' : value === '60' ? '1 hour' : 'Custom'}</Text></Pressable>)}
+            </View>
+            {reminderChoice === 'custom' && <View style={styles.customReminderRow}><TextInput value={customReminder} onChangeText={setCustomReminder} keyboardType="number-pad" placeholder="Minutes" placeholderTextColor="#8B948E" style={[styles.input, styles.customReminderInput]} /><Text style={styles.muted}>minutes</Text></View>}
+          </>}
         </View>
         <Text style={styles.templateHeading}>Quick templates</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.templateRow}>
@@ -392,6 +433,7 @@ const styles = StyleSheet.create({
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 }, switchCopy: { flex: 1, gap: 3 }, privacy: { textAlign: 'center', color: COLORS.muted, fontSize: 13 },
   quoteCard: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, padding: 15, backgroundColor: '#FFF8E9', borderRadius: 17 }, quote: { flex: 1, color: '#70541F', fontSize: 15, lineHeight: 21, fontWeight: '600' },
   kindChooser: { flexDirection: 'row', gap: 9 }, kindChoice: { flex: 1, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: COLORS.line, borderRadius: 12 }, kindDoActive: { backgroundColor: COLORS.greenSoft, borderColor: '#B8D8C5' }, kindDontActive: { backgroundColor: COLORS.coralSoft, borderColor: '#EDC0B7' }, kindChoiceText: { fontWeight: '800', color: COLORS.muted }, templateHeading: { color: COLORS.muted, fontSize: 13, fontWeight: '800', marginTop: 2 }, templateRow: { gap: 8, paddingVertical: 2 }, templateChip: { flexDirection: 'row', gap: 5, alignItems: 'center', paddingHorizontal: 11, paddingVertical: 9, borderRadius: 999 }, templateDo: { backgroundColor: COLORS.greenSoft }, templateDont: { backgroundColor: COLORS.coralSoft }, templateText: { fontSize: 12, fontWeight: '700' },
+  reminderPanel: { gap: 11, padding: 13, borderRadius: 15, backgroundColor: '#F7F3FF', borderWidth: 1, borderColor: COLORS.line }, reminderChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, reminderChoice: { paddingHorizontal: 11, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.card }, reminderChoiceActive: { borderColor: COLORS.green, backgroundColor: COLORS.greenSoft }, reminderChoiceText: { color: COLORS.muted, fontSize: 12, fontWeight: '700' }, reminderChoiceTextActive: { color: COLORS.green }, customReminderRow: { flexDirection: 'row', alignItems: 'center', gap: 9 }, customReminderInput: { width: 110, minHeight: 44 }, reminderBadge: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 999, backgroundColor: COLORS.greenSoft }, reminderBadgeText: { color: COLORS.green, fontSize: 12, fontWeight: '700' },
   addRow: { flexDirection: 'row', gap: 10 }, addInput: { flex: 1 }, addButton: { width: 50, height: 50, backgroundColor: COLORS.green, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 }, summaryText: { fontSize: 12, color: COLORS.muted }, goalRow: { flexDirection: 'row', gap: 11, paddingVertical: 13, borderTopWidth: 1, borderTopColor: '#EEF1ED' }, kindIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' }, doIcon: { backgroundColor: COLORS.greenSoft }, dontIcon: { backgroundColor: COLORS.coralSoft },
   goalMain: { flex: 1, gap: 10 }, goalTitle: { fontSize: 16, lineHeight: 22, color: COLORS.ink, fontWeight: '600' }, goalDone: { textDecorationLine: 'line-through', color: COLORS.muted }, statusActions: { flexDirection: 'row', gap: 8 }, statusButton: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: COLORS.line, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10 }, statusAchieved: { backgroundColor: COLORS.green, borderColor: COLORS.green }, statusFailed: { backgroundColor: COLORS.coral, borderColor: COLORS.coral }, statusText: { fontSize: 12, fontWeight: '700', color: COLORS.muted }, statusTextActive: { color: '#FFF' }, reasonInput: { borderBottomWidth: 1, borderBottomColor: '#E4C7C1', paddingVertical: 9, color: COLORS.ink, fontSize: 14 },
