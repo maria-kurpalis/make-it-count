@@ -81,6 +81,10 @@ export async function cancelGoalReminder(notificationId?: string) {
   if (notificationId) await Notifications.cancelScheduledNotificationAsync(notificationId);
 }
 
+export async function cancelAllNotifications() {
+  await Notifications.cancelAllScheduledNotificationsAsync();
+}
+
 export async function rescheduleNotifications(planningTime: string, reviewTime: string, diaryEnabled: boolean, diaryTime: string) {
   const granted = await configureNotifications();
   if (!granted) return false;
